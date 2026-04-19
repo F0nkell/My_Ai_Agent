@@ -1,0 +1,103 @@
+version: "3.9"
+
+services:
+  # === PostgreSQL ===
+  postgres:
+    image: postgres:16-alpine
+    container_name: investment_os_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-investor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-invest_os_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-investment_os}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U investor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === Redis ===
+  redis:
+    image: redis:7-alpine
+    container_name: investment_os_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === FastAPI Application ===
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: investment_os_app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+
+  # === Celery Worker ===
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: investment_os_worker
+    restart: unless-stopped
+    command: celery -A src.pipeline.tasks worker --loglevel=info --concurrency=2
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+
+  # === Celery Beat (Scheduler) ===
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: investment_os_scheduler
+    restart: unless-stopped
+    command: celery -A src.pipeline.tasks beat --loglevel=info
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+
+volumes:
+  postgres_data:
+  redis_data:
