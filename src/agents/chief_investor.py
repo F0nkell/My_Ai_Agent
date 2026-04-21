@@ -3,68 +3,79 @@ Agentic Investment OS — Chief Investor Agent
 Финальный агент — принимает инвестиционные решения на основе ВСЕХ данных.
 """
 
+import json
+
 from src.agents.base import BaseAgent
 from src.agents.schemas import ChiefInvestorOutput
 
 
-CHIEF_INVESTOR_PROMPT = """Ты — Chief Investor (Главный инвестор) системы "Agentic Investment OS".
-Ты — финальный центр принятия решений. Тебе доступны выводы ВСЕХ предыдущих агентов.
+CHIEF_INVESTOR_SYSTEM_PROMPT = """RULES (MANDATORY, NEVER BREAK):
+1. RESPOND ONLY WITH RAW JSON. No greetings, no explanations, no markdown text outside the JSON block.
+2. The ENTIRE response must be a single valid JSON object. Nothing before { and nothing after }.
+3. Never say "Of course!", "Sure!", "Great question!", "Here is your analysis", or any similar phrase.
+4. Never ask questions. Never request clarification.
+5. If data is missing — use null or empty arrays [], but still output valid complete JSON.
+6. JSON keys must EXACTLY match the schema provided.
 
-ПРОФИЛЬ ИНВЕСТОРА:
-- 18 лет, стратегия "Русский Спринт 2026-2032"
-- Портфель: ~134 000₽
-- Цель: к 2032 ликвидный капитал для эмиграции, к 50 годам — $10 000/мес пассивного дохода
-- Стиль: агрессивное накопление через "Великую Четвёрку"
-- Правило снайпера: копим кэш, бьём крупно по хорошим ценам
-- Зарплата 10-го числа (~3000₽), четверг 500₽ — всё в рынок
-- Дивиденды НЕ выводим — реинвестируем
-- НЕ паникуем на просадках — "красный цвет = скидка"
-- НИКАКОГО автотрейдинга — только рекомендации
+CONTEXT:
+STRATEGY: "Russian Sprint 2026-2032"
 
-"ВЕЛИКАЯ ЧЕТВЁРКА":
-1. LKOH (Лукойл) — рост + дивиденды, средняя 5365₽
-2. SBERP (Сбер-преф) — ставка на экономику, средняя 324₽
-3. TATNP (Татнефть-преф) — дивидендный пулемёт, средняя 578₽
-4. SNGSP (Сургутнефтегаз-преф) — валютная кубышка, средняя 43₽
+ROLE:
+Final decision-maker. You convert analysis into capital allocation.
 
-Твоя задача: На основе ВСЕХ данных дать финальные рекомендации:
-1. Оценка рынка
-2. Здоровье портфеля
-3. Конкретные действия по каждому активу (buy/sell/hold/accumulate/reduce)
-4. Распределение капитала (куда направить следующие деньги)
-5. Ключевые даты впереди
-6. Главный риск
+OBJECTIVES:
+* Combine all agent outputs
+* Assign actions per asset
+* Define capital allocation
+* Set price levels
+* Define priorities and risks
 
-ПРАВИЛА:
-- ⚠️ Только РЕКОМЕНДАЦИИ, никакого автотрейдинга
-- Указывай confidence (уверенность)
-- Давай конкретные уровни (целевая цена, стоп-лосс)
-- Приоритизируй действия (что важнее)
-- Учитывай дивидендный сезон (май-июль)
-- Помни: мы бьём в 4-5 ЛУЧШИХ бизнесов, не распыляемся
+DECISION RULES:
+* buy → only if strong dip + confidence > 0.75
+* accumulate → default for strong assets
+* hold → neutral
+* reduce → weakening thesis
+* sell → broken thesis
 
-ОТВЕТ строго в JSON:
+ALLOCATION PRIORITY:
+LKOH → TATNP → SBER → SNGSP → cash
+
+DIVIDEND RULE:
+May–July → maximize reinvestment
+
+OUTPUT SCHEMA:
 {
-    "market_assessment": "...",
-    "portfolio_health": "strong/moderate/weak",
-    "recommendations": [{"symbol": "...", "action": "buy/sell/hold/accumulate/reduce", "confidence": 0.0..1.0, "priority": 1-10, "target_price": null, "stop_loss": null, "time_horizon": "...", "reasoning": "...", "risks": [...], "triggers": [...]}],
-    "capital_allocation": {"next_buy": "...", "allocation": {...}},
-    "next_actions": ["..."],
-    "key_dates": ["..."],
-    "risk_warning": "...",
-    "summary": "..."
+"market_assessment": "...",
+"portfolio_health": "strong",
+"recommendations": [{
+"symbol": "...",
+"action": "buy",
+"confidence": 0.0,
+"priority": 1,
+"target_price": null,
+"stop_loss": null,
+"time_horizon": "...",
+"reasoning": "...",
+"risks": ["..."],
+"triggers": ["..."]
+}],
+"capital_allocation": {
+"next_buy": "...",
+"allocation": {"LKOH": 0.0}
+},
+"next_actions": ["..."],
+"key_dates": ["..."],
+"risk_warning": "...",
+"summary": "..."
 }"""
 
 
 class ChiefInvestorAgent(BaseAgent):
     name = "chief_investor"
-    prompt_template = CHIEF_INVESTOR_PROMPT
+    system_prompt = CHIEF_INVESTOR_SYSTEM_PROMPT
     output_schema = ChiefInvestorOutput
 
     def _build_user_prompt(self, context: dict) -> str:
-        import json
-
-        # Собираем ВСЕ выходы предыдущих агентов
         compact = {
             "plan": context.get("plan", {}),
             "news_analysis": context.get("news_analysis", {}),
@@ -74,8 +85,7 @@ class ChiefInvestorAgent(BaseAgent):
             "memory": context.get("memory", {}),
             "macro_data": context.get("macro_data", {}),
         }
-
         return (
-            "На основе ВСЕХ предоставленных данных дай финальные рекомендации.\n\n"
-            f"ДАННЫЕ:\n{json.dumps(compact, ensure_ascii=False, default=str)}"
+            "Synthesize all agent outputs and provide final investment recommendations.\n\n"
+            f"ALL AGENT DATA:\n{json.dumps(compact, ensure_ascii=False, default=str, separators=(',', ':'))}"
         )

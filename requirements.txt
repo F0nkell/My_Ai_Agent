@@ -15,8 +15,8 @@ psycopg2-binary==2.9.10
 celery[redis]==5.4.0
 redis==5.2.1
 
-# === LLM (ChatGPT без API через g4f) ===
-g4f==0.4.2.2
+# === LLM (ChatGPT Plus через веб-интерфейс + Playwright) ===
+playwright==1.49.1
 
 # === Financial Data ===
 yfinance==0.2.51

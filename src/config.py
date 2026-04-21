@@ -41,10 +41,19 @@ class Settings(BaseSettings):
     telegram_bot_token: str = Field(default="")
     telegram_chat_id: str = Field(default="")
 
-    # === LLM ===
-    llm_provider: str = Field(default="g4f")
-    llm_model: str = Field(default="gpt-4o")
-    llm_fallback_model: str = Field(default="gpt-4o-mini")
+    # === Browser (Playwright / ChatGPT Plus Web) ===
+    browser_data_path: str = Field(
+        default=".browser_data",
+        description="Путь к папке профиля Chromium (хранит сессию ChatGPT Plus)"
+    )
+    browser_headless: bool = Field(
+        default=True,
+        description="Запускать браузер в headless-режиме (False только для первичной настройки)"
+    )
+    gemini_chat_url: str = Field(
+        default="https://gemini.google.com/app",
+        description="Прямая ссылка на чат Smeam в Gemini"
+    )
 
     # === Pipeline ===
     pipeline_interval_hours: int = Field(default=6)

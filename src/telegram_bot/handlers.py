@@ -104,3 +104,110 @@ async def latest_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         text = format_recommendations(summary_data, recs_dicts)
         await update.message.reply_text(text, parse_mode="Markdown")
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик простых текстовых сообщений для Инвестора и Стратега."""
+    if not await check_auth(update): return
+    
+    text = update.message.text.strip()
+    lower_text = text.lower()
+    
+    # Режим "Стратег" -> Отправка в Gemini Web
+    if lower_text.startswith("стратег"):
+        # Отрезаем слово Стратег
+        prompt = text[7:].strip()
+        if prompt.startswith(','):
+            prompt = prompt[1:].strip()
+            
+        if not prompt:
+            await update.message.reply_text("Что мне передать Стратегу (Gemini)? Напишите: Стратег, <сообщение>")
+            return
+            
+        await update.message.reply_text("⏳ Стратег думает...")
+        
+        try:
+            from src.agents.browser_provider import get_browser_provider
+            from src.agents.gemini_provider import GeminiProvider
+            
+            # Получаем синглтон браузера
+            browser_provider = await get_browser_provider(settings.browser_data_path)
+            if not browser_provider._browser:
+                await update.message.reply_text("❌ Ошибка: браузер не инициализирован.")
+                return
+                
+            gemini = GeminiProvider(browser_provider._browser)
+            response = await gemini.send_message(prompt)
+            
+            # Телеграм позволяет до 4096 символов в сообщении
+            if len(response) > 4050:
+                for x in range(0, len(response), 4050):
+                    await update.message.reply_text(response[x:x+4050])
+            else:
+                await update.message.reply_text(response)
+                
+        except Exception as e:
+            logger.error(f"Ошибка Gemini: {e}", exc_info=True)
+            await update.message.reply_text(f"❌ Ошибка связи со Стратегом: {str(e)}")
+            
+    # Режим "Инвестор" -> Отправка Chief Investor в ChatGPT
+    elif lower_text.startswith("инвестор"):
+        prompt = text[8:].strip()
+        if prompt.startswith(','):
+            prompt = prompt[1:].strip()
+            
+        if not prompt:
+            await update.message.reply_text("Что передать Главному Инвестору? Напишите: Инвестор, закинул 5000 руб.")
+            return
+            
+        await update.message.reply_text("💼 Отправляю запрос Главному Инвестору...")
+        
+        try:
+            from src.database.repositories.chat_sessions import ChatSessionRepository
+            from src.agents.browser_provider import get_browser_provider
+            
+            async with async_session_factory() as session:
+                repo = ChatSessionRepository(session)
+                chat_session = await repo.get_session("chief_investor")
+                
+            if not chat_session:
+                await update.message.reply_text("❌ Чат Chief Investor не найден в базе. Инициализируйте чаты (scripts/init_agent_chats.py).")
+                return
+                
+            # Оборачиваем запрос пользователя чтобы GPT вернула JSON рекомендаций
+            investor_request = (
+                f"ВВОДНЫЕ ДАННЫЕ ОТ ПОЛЬЗОВАТЕЛЯ:\n{prompt}\n\n"
+                "Исходя из твоего текущего понимания рынка и последней аналитики, скажи куда вложить эти деньги "
+                "и обнови свои рекомендации. Строго верни JSON по своей схеме!"
+            )
+            
+            browser_provider = await get_browser_provider(settings.browser_data_path)
+            raw_response = await browser_provider.send_message(chat_session.chat_url, investor_request)
+            parsed_json = browser_provider.parse_json_response(raw_response)
+            
+            if parsed_json and not parsed_json.get("parse_error"):
+                await update.message.reply_text("✅ Инвестор ответил:")
+                # Форматируем как обычные рекомендации (коротко)
+                recs = parsed_json.get("recommendations", [])
+                summary = parsed_json.get("summary", "Подробности смотри в рекомендациях.")
+                
+                # Небольшой кастомный вывод
+                response_md = f"**Вердикт Инвестора:**\n_{summary}_\n\n"
+                
+                allocation = parsed_json.get("capital_allocation", {})
+                if allocation:
+                    response_md += f"**Распределение (по плану '{allocation.get('next_buy', '')}'):**\n"
+                    for k, v in allocation.get("allocation", {}).items():
+                        response_md += f"• {k}: {v}\n"
+                    response_md += "\n"
+                
+                for r in recs:
+                    response_md += f"🔹 **{r['symbol']}** -> {r['action'].upper()} (Confidence: {r['confidence']})\n"
+                    
+                await update.message.reply_text(response_md, parse_mode="Markdown")
+            else:
+                # Если парсинг упал, отдаем как есть
+                await update.message.reply_text("Ответ от Инвестора получен, но не по формату:\n\n" + raw_response[:4000])
+
+        except Exception as e:
+            logger.error(f"Ошибка Chief Investor (Telegram): {e}", exc_info=True)
+            await update.message.reply_text(f"❌ Ошибка связи с Инвестором: {str(e)}")

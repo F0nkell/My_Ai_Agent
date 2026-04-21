@@ -1,6 +1,11 @@
 """
-Agentic Investment OS — Главный пайплайн оркестрации
-Управляет последовательным запуском всех агентов и анализаторов.
+Agentic Investment OS — Главный пайплайн оркестрации (Playwright / ChatGPT Plus Web)
+Управляет последовательным запуском всех агентов через единый браузер.
+
+АРХИТЕКТУРА:
+- Один BrowserProvider (Playwright) на весь пайплайн.
+- Агенты работают ПОСЛЕДОВАТЕЛЬНО (один браузер → одна вкладка за раз).
+- Каждый агент имеет свой чат на chatgpt.com. URL хранится в БД (web_chat_sessions).
 """
 
 import uuid
@@ -8,7 +13,9 @@ from datetime import datetime
 from typing import Optional
 
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.agents.browser_provider import BrowserProvider, get_browser_provider
 from src.database.repositories.analysis import AnalysisRepository
 from src.database.repositories.assets import AssetRepository
 from src.database.repositories.news import NewsRepository
@@ -23,36 +30,45 @@ from src.agents.news_analyst import NewsAnalystAgent
 from src.agents.market_analyst import MarketAnalystAgent
 from src.agents.thesis_analyst import ThesisAnalystAgent
 from src.agents.chief_investor import ChiefInvestorAgent
+from src.config import get_settings
+
+settings = get_settings()
 
 
 class PipelineOrchestrator:
     """Точка входа для запуска полного цикла анализа."""
 
-    def __init__(self, session):
+    def __init__(self, session: AsyncSession):
         self.session = session
         self.analysis_repo = AnalysisRepository(session)
         self.asset_repo = AssetRepository(session)
         self.news_repo = NewsRepository(session)
         self.memory_repo = MemoryRepository(session)
-        
+
         self.market_collector = MarketCollector()
         self.macro_collector = MacroCollector()
         self.preprocessor = DataPreprocessor()
         self.signal_engine = SignalEngine()
-        
+
         self.recent_memory = RecentContextManager(self.memory_repo)
         self.thesis_memory = ThesisMemoryManager(self.memory_repo)
-        
-        self.planner = ChiefPlannerAgent()
-        self.news_analyst = NewsAnalystAgent()
-        self.market_analyst = MarketAnalystAgent()
-        self.thesis_analyst = ThesisAnalystAgent()
-        self.investor = ChiefInvestorAgent()
+
+        # Агенты инициализируются с db_session для работы с web_chat_sessions
+        self.planner = ChiefPlannerAgent(db_session=session)
+        self.news_analyst = NewsAnalystAgent(db_session=session)
+        self.market_analyst = MarketAnalystAgent(db_session=session)
+        self.thesis_analyst = ThesisAnalystAgent(db_session=session)
+        self.investor = ChiefInvestorAgent(db_session=session)
 
     async def run(self, run_id: uuid.UUID) -> None:
         """Запуск полного пайплайна."""
         logger.info(f"🚀 Запуск пайплайна {run_id}")
-        
+
+        # Получаем инициализированный браузер (синглтон)
+        provider: BrowserProvider = await get_browser_provider(
+            browser_data_path=settings.browser_data_path
+        )
+
         try:
             await self.analysis_repo.update_run_status(run_id, "running")
             
@@ -77,10 +93,10 @@ class PipelineOrchestrator:
             
             # --- 2. Chief Planner ---
             logger.info("🧠 Шаг 2: Chief Planner генерирует план")
-            plan_result = await self.planner.run(planner_context)
+            plan_result = await self.planner.run(planner_context, provider)
             plan = plan_result.get("output", {})
             focus_assets = [a.get("symbol") for a in plan.get("focus_assets", [])]
-            
+
             await self.analysis_repo.set_plan(run_id, plan)
             await self._save_agent_output(run_id, self.planner.name, plan_result)
             
@@ -118,7 +134,7 @@ class PipelineOrchestrator:
                 "focus_assets": focus_assets,
                 "news": filtered_news,
             }
-            news_result = await self.news_analyst.run(news_context)
+            news_result = await self.news_analyst.run(news_context, provider)
             await self._save_agent_output(run_id, self.news_analyst.name, news_result)
             
             # Отмечаем новости как обработанные
@@ -132,7 +148,7 @@ class PipelineOrchestrator:
                 "macro_data": macro_data,
                 "signals_summary": signals_summary,
             }
-            market_result = await self.market_analyst.run(market_context)
+            market_result = await self.market_analyst.run(market_context, provider)
             await self._save_agent_output(run_id, self.market_analyst.name, market_result)
             
             # --- 7. Thesis Analyst ---
@@ -144,7 +160,7 @@ class PipelineOrchestrator:
                 "signals_summary": signals_summary,
                 "recent_context": await self.recent_memory.build_context_window(days=7),
             }
-            thesis_result = await self.thesis_analyst.run(thesis_context)
+            thesis_result = await self.thesis_analyst.run(thesis_context, provider)
             await self._save_agent_output(run_id, self.thesis_analyst.name, thesis_result)
             
             # Обновляем тезисы в памяти
@@ -171,7 +187,7 @@ class PipelineOrchestrator:
                 "memory": await self.memory_repo.build_context_for_agent(),
                 "macro_data": macro_data,
             }
-            investor_result = await self.investor.run(investor_context)
+            investor_result = await self.investor.run(investor_context, provider)
             await self._save_agent_output(run_id, self.investor.name, investor_result)
             
             # Сохраняем рекомендации

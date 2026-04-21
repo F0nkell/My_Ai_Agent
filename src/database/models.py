@@ -314,3 +314,31 @@ class Feedback(Base):
 
     # Relationships
     recommendation: Mapped["ChiefRecommendation"] = relationship(back_populates="feedback")
+
+
+# ============================================================
+# 11. WEB_CHAT_SESSIONS — ChatGPT Plus чаты агентов
+# ============================================================
+class WebChatSession(Base):
+    """
+    Хранит URL конкретного чата ChatGPT Plus для каждого агента.
+    Системный промпт агента отправляется один раз при создании чата,
+    далее бот пишет в этот чат только данные (user prompt).
+    """
+    __tablename__ = "web_chat_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    agent_name: Mapped[str] = mapped_column(
+        String(50), unique=True, nullable=False, index=True
+    )
+    # URL вида https://chatgpt.com/c/<uuid>
+    chat_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_web_chat_sessions_agent", "agent_name"),
+    )

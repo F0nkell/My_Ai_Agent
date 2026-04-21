@@ -11,7 +11,8 @@ from src.telegram_bot.handlers import (
     start_command,
     portfolio_command,
     run_command,
-    latest_command
+    latest_command,
+    handle_text
 )
 
 settings = get_settings()
@@ -30,6 +31,10 @@ def get_telegram_app() -> Application:
         app.add_handler(CommandHandler("portfolio", portfolio_command))
         app.add_handler(CommandHandler("run", run_command))
         app.add_handler(CommandHandler("latest", latest_command))
+        
+        # Обработчик обычного текста (Инвестор / Стратег)
+        from telegram.ext import MessageHandler, filters
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
         logger.info("📱 Telegram Бот инициализирован")
         return app
